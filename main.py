@@ -37,6 +37,22 @@ def log_likelihood(x_data, m, s):
     for xi in x_data:
         total += log_normal_pdf(xi, m, s)
     return total
+def solve_xj(xi_value):
+    """Возвращает список из 0, 1 или 2 действительных решений xj для данного xi."""
+    A = a2
+    B = a3 * xi_value + a5
+    C = a1 * xi_value**2 + a4 * xi_value + a6
+
+    discriminant = B**2 - 4 * A * C
+    if discriminant < 0:
+        return []  # нет действительных решений при этом xi
+    elif discriminant == 0:
+        return [-B / (2 * A)]
+    else:
+        sqrt_d = np.sqrt(discriminant)
+        xj1 = (-B + sqrt_d) / (2 * A)
+        xj2 = (-B - sqrt_d) / (2 * A)
+        return [xj1, xj2]
 
 if __name__ == '__main__':
     with open('IRIS.DAT', 'rb') as f:
@@ -90,8 +106,54 @@ if __name__ == '__main__':
     sigma_se_inv = np.linalg.inv(sigma_se) #ищем обратные матрицы
     sigma_ve_inv = np.linalg.inv(sigma_ve)
 
+    A_se, B_se, C_se = sigma_se_inv[0, 0], sigma_se_inv[0, 1], sigma_se_inv[1, 1]
+    A_ve, B_ve, C_ve = sigma_ve_inv[0, 0], sigma_ve_inv[0, 1], sigma_ve_inv[1, 1]
+    m1_se, m2_se = mu_se
+    m1_ve, m2_ve = mu_ve
+
+
     log_det_se = np.log(np.linalg.det(sigma_se)) #определители
     log_det_ve = np.log(np.linalg.det(sigma_ve))
+
+    logprior_se = np.log(0.5)  # допущение: равные априорные вероятности классов
+    logprior_ve = np.log(0.5)
+
+    a1 = (-A_se + A_ve) / 2
+    a2 = (-C_se + C_ve) / 2
+    a3 = (-B_se + B_ve)
+    a4 = A_se * m1_se - A_ve * m1_ve + B_se * m2_se - B_ve * m2_ve
+    a5 = B_se * m1_se - B_ve * m1_ve + C_se * m2_se - C_ve * m2_ve
+    a6 = (-A_se * m1_se ** 2 / 2 + A_ve * m1_ve ** 2 / 2
+          - B_se * m1_se * m2_se + B_ve * m1_ve * m2_ve
+          - C_se * m2_se ** 2 / 2 + C_ve * m2_ve ** 2 / 2
+          - log_det_se / 2 + log_det_ve / 2
+          + logprior_se - logprior_ve)
+
+    print('Коэффициенты уравнения границы решения:')
+    print(f'a1 = {a1:.6f}')
+    print(f'a2 = {a2:.6f}')
+    print(f'a3 = {a3:.6f}')
+    print(f'a4 = {a4:.6f}')
+    print(f'a5 = {a5:.6f}')
+    print(f'a6 = {a6:.6f}')
+
+    all_x2 = np.concatenate([Se[:, 0], Ve[:, 0]])
+    xi_range = np.linspace(all_x2.min() - 0.5, all_x2.max() + 0.5, 500)
+
+    branch1_xi, branch1_xj = [], []
+    branch2_xi, branch2_xj = [], []
+
+    for xi_value in xi_range:
+        solutions = solve_xj(xi_value)
+        if len(solutions) == 2:
+            branch1_xi.append(xi_value)
+            branch1_xj.append(solutions[0])
+            branch2_xi.append(xi_value)
+            branch2_xj.append(solutions[1])
+        elif len(solutions) == 1:
+            branch1_xi.append(xi_value)
+            branch1_xj.append(solutions[0])
+
 
     #Построение графика с границей решения
 
@@ -111,21 +173,27 @@ if __name__ == '__main__':
             diff_grid[i, j] = g_se(point) - g_ve(point)
 
     fig, ax = plt.subplots(figsize=(9, 7))
+    ax.scatter(Se[:, 0], Se[:, 1], color='#d62728', label='Se', s=40, edgecolor='black')
+    ax.scatter(Ve[:, 0], Ve[:, 1], color='#1f77b4', label='Ve', s=40, edgecolor='black')
+    ax.scatter(*mu_se, color='#d62728', marker='X', s=200, edgecolor='black')
+    ax.scatter(*mu_ve, color='#1f77b4', marker='X', s=200, edgecolor='black')
 
-    #все точки
-    ax.scatter(Se[:, 0], Se[:, 1], color='red', label='Se', edgecolor='black')
-    ax.scatter(Ve[:, 0], Ve[:, 1], color='blue', label='Ve', edgecolor='black')
+    ax.plot(branch1_xi, branch1_xj, color='black', linewidth=2, label='граница решения (ветвь 1)')
+    ax.plot(branch2_xi, branch2_xj, color='black', linewidth=2, linestyle='--', label='граница решения (ветвь 2)')
 
-    ax.scatter(*mu_se, color='red', marker='X', s=200, edgecolor='black') #вывод средней точки
-    ax.scatter(*mu_ve, color='blue', marker='X', s=200, edgecolor='black') #вывод средней точки
-    #вывод на график решающего правила
-    ax.contour(X2, X3, diff_grid, levels=[0], colors='black', linewidths=2)
-    #названия осей
     ax.set_xlabel('x2 (обратный порядок)')
-    ax.set_ylabel('x3 (обычный порядок)')
+    ax.set_ylabel('x3')
+    ax.set_title('Байесовская граница решения - точное аналитическое решение')
+    all_x3_and_branches = np.concatenate([Se[:, 1], Ve[:, 1], branch1_xj, branch2_xj])
+    ax.set_ylim(min(all_x3_and_branches) - 0.5, max(all_x3_and_branches) + 0.5)
+    ax.axhline(0, color='gray', linewidth=0.8, linestyle=':')
     ax.legend()
-    plt.savefig('bayes_decision_se_ve.png', dpi=150)
-    print("График сохранён")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('boundary_analytic.png', dpi=150)
+    print('\nГрафик сохранён')
+
+
 
     #задание 3
     #Часть 1: сетка по mu при фиксированной sigma (берём sigma из Задания 1)
